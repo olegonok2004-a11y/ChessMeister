@@ -8,11 +8,9 @@
     3. Соединение устанавливается напрямую между браузерами (P2P).
        Сервер PeerJS используется только для «знакомства», игровые ходы идут P2P.
 
-  Что изменено по сравнению с прошлой версией:
-    • BroadcastChannel заменён на PeerJS (WebRTC DataChannel);
-    • обработка состояний соединения (регистрация, подключение, обрыв);
-    • понятные сообщения об ошибках при недоступной комнате;
-    • авто-перегенерация кода, если комната уже занята.
+  Транспорт: PeerJS поверх WebRTC DataChannel.
+  Signaling: 1.peerjs.com (зеркало через Cloudflare — надёжнее, чем 0.peerjs.com).
+  STUN:      явно указаны серверы Google — помогают пробить NAT.
 -->
 <html lang="ru">
 <head>
@@ -1674,17 +1672,32 @@ function findBestMove(s,maxDepth,limit){
    помогает «познакомить» браузеры (signaling).
 
    Протокол сообщений:
-     hello    { skin }              гость  → хост
-     welcome  { hostSkin, yourColor } хост → гость
-     move     { from, to, promo }   любой → другой
-     resign   {}                    любой → другой
-     rematch  { accept:boolean }    любой → другой
-     bye      {}                    любой → другой
+     hello    { skin }               гость  → хост
+     welcome  { hostSkin, yourColor } хост   → гость
+     move     { from, to, promo }    любой  → другой
+     resign   {}                     любой  → другой
+     rematch  { accept:boolean }     любой  → другой
+     bye      {}                     любой  → другой
    ============================================================ */
 const MP_ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const MP_CODE_LEN = 5;
-/* префикс, чтобы наши ID не сталкивались с чужими PeerJS-приложениями */
 const MP_PEER_PREFIX = 'cm-';
+
+/* Конфиг PeerJS. Публичный 0.peerjs.com часто лежит — используем зеркало
+   через Cloudflare. Явные STUN-серверы помогают пробить NAT. */
+const PEER_CONFIG = {
+  host: '1.peerjs.com',
+  port: 443,
+  path: '/',
+  secure: true,
+  debug: 1,
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ]
+  }
+};
 
 const mpState = {
   active:false,
@@ -1912,7 +1925,7 @@ function mpCreateRoom(){
 
   let peer;
   try{
-    peer = new Peer(MP_PEER_PREFIX + code, { debug: 1 });
+    peer = new Peer(MP_PEER_PREFIX + code, PEER_CONFIG);
   }catch(e){
     mpSetStatus('Не удалось создать соединение: '+(e.message||'ошибка'), false, true);
     return;
@@ -1947,7 +1960,7 @@ function mpCreateRoom(){
       setTimeout(mpCreateRoom, 150);
       return;
     }
-    if(err.type === 'network'){
+    if(err.type === 'network' || err.type === 'server-error'){
       mpSetStatus('Проблема с сетью. Проверьте подключение.', false, true);
       return;
     }
@@ -1976,7 +1989,7 @@ function mpJoinRoom(rawCode){
 
   let peer;
   try{
-    peer = new Peer({ debug: 1 }); /* случайный ID — гостю кастомный не нужен */
+    peer = new Peer(PEER_CONFIG); /* случайный ID — гостю кастомный не нужен */
   }catch(e){
     mpSetStatus('Не удалось создать соединение: '+(e.message||'ошибка'), false, true);
     return;
@@ -2011,7 +2024,7 @@ function mpJoinRoom(rawCode){
       mpSetStatus('Комната не найдена. Проверьте код.', false, true);
       return;
     }
-    if(err.type === 'network'){
+    if(err.type === 'network' || err.type === 'server-error'){
       clearTimeout(joinTimeout);
       mpSetStatus('Проблема с сетью. Проверьте подключение.', false, true);
       return;
